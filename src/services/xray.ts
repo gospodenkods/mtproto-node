@@ -21,36 +21,46 @@ export interface VlessConfig {
   grpcServiceName?: string;
 }
 
-export async function fetchAndParseSubscription(input: string): Promise<VlessConfig | null> {
-  try {
-    // Raw vless:// link — parse directly
-    if (input.startsWith('vless://')) {
-      return parseVlessUri(input);
-    }
+export async function fetchAndParseSubscription(input: string): Promise<VlessConfig> {
+  // Raw vless:// link — parse directly
+  if (input.startsWith('vless://')) {
+    const cfg = parseVlessUri(input);
+    if (!cfg) throw new Error('Не удалось разобрать vless:// ссылку');
+    return cfg;
+  }
 
-    const resp = await fetch(input, {
+  let resp: Response;
+  try {
+    resp = await fetch(input, {
       signal: AbortSignal.timeout(15000),
       headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
     });
-    if (!resp.ok) return null;
-
-    let content = (await resp.text()).trim();
-
-    // Try base64 decode (common subscription format)
-    try {
-      const decoded = Buffer.from(content, 'base64').toString('utf-8');
-      if (decoded.includes('vless://') || decoded.includes('vmess://')) {
-        content = decoded;
-      }
-    } catch {}
-
-    const lines = content.split('\n').map((l) => l.trim()).filter((l) => l.startsWith('vless://'));
-    if (lines.length === 0) return null;
-
-    return parseVlessUri(lines[0]);
-  } catch {
-    return null;
+  } catch (err: any) {
+    throw new Error(`Не удалось получить подписку: ${err?.message || err}`);
   }
+
+  if (!resp.ok) {
+    throw new Error(`Сервер подписки вернул ${resp.status} ${resp.statusText}`);
+  }
+
+  let content = (await resp.text()).trim();
+
+  // Try base64 decode (common subscription format)
+  try {
+    const decoded = Buffer.from(content, 'base64').toString('utf-8');
+    if (decoded.includes('vless://') || decoded.includes('vmess://')) {
+      content = decoded;
+    }
+  } catch {}
+
+  const lines = content.split('\n').map((l) => l.trim()).filter((l) => l.startsWith('vless://'));
+  if (lines.length === 0) {
+    throw new Error('В подписке не найдено vless:// записей (поддерживается только VLESS)');
+  }
+
+  const cfg = parseVlessUri(lines[0]);
+  if (!cfg) throw new Error('Не удалось разобрать vless:// ссылку из подписки');
+  return cfg;
 }
 
 function parseVlessUri(uri: string): VlessConfig | null {

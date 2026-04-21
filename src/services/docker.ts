@@ -198,8 +198,7 @@ export async function createProxyContainer(
 
   // Inject proxychains4.conf if VPN socks5 host specified
   if (socks5Host) {
-    const socks5Ip = await resolveContainerIp(socks5Host);
-    const pcConfig = generateProxychainsConfig(socks5Ip);
+    const pcConfig = generateProxychainsConfig(socks5Host);
     const pcTar = createTarBuffer('proxychains-vpn.conf', pcConfig);
     await container.putArchive(pcTar, { path: '/etc' });
   }

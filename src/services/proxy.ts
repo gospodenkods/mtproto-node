@@ -45,7 +45,6 @@ export async function createProxy(req: ProxyCreateRequest): Promise<ProxyConfig>
   if (req.vpnSubscription) {
     vpnContainerName = `${config.xrayContainerPrefix}${id}`;
     const vlessConfig = await xrayService.fetchAndParseSubscription(req.vpnSubscription);
-    if (!vlessConfig) throw new Error('Failed to parse VPN subscription URL');
     await xrayService.createXrayContainer(vpnContainerName, vlessConfig);
     socks5Host = vpnContainerName;
   }
@@ -143,7 +142,6 @@ export async function updateProxy(id: string, req: ProxyUpdateRequest): Promise<
     if (req.vpnSubscription) {
       const newVpnName = `${config.xrayContainerPrefix}${id}`;
       const vlessConfig = await xrayService.fetchAndParseSubscription(req.vpnSubscription);
-      if (!vlessConfig) throw new Error('Failed to parse VPN subscription URL');
       await xrayService.createXrayContainer(newVpnName, vlessConfig);
       updates.vpnContainerName = newVpnName;
       updates.vpnSubscription = req.vpnSubscription;
