@@ -122,7 +122,10 @@ export async function updateProxy(id: string, req: ProxyUpdateRequest): Promise<
   const updates: Partial<ProxyConfig> = {};
 
   if (req.domain) updates.domain = req.domain;
-  if (req.tag !== undefined) updates.tag = req.tag;
+  if (req.tag !== undefined) {
+    updates.tag = req.tag;
+    if (req.tag !== (proxy.tag || '')) needsRestart = true;
+  }
   if (req.name !== undefined) updates.name = req.name;
   if (req.note !== undefined) updates.note = req.note;
   if (req.maxConnections !== undefined) updates.maxConnections = req.maxConnections;
