@@ -68,19 +68,23 @@ export async function reconnectContainersToNetwork(): Promise<void> {
 }
 
 export async function pullImage(image: string): Promise<void> {
+  // If the image already exists locally, skip pulling to avoid Docker Hub rate limits
   try {
     await docker.getImage(image).inspect();
+    return;
   } catch {
-    await new Promise<void>((resolve, reject) => {
-      docker.pull(image, (err: Error | null, stream: NodeJS.ReadableStream) => {
-        if (err) return reject(err);
-        docker.modem.followProgress(stream, (err2: Error | null) => {
-          if (err2) return reject(err2);
-          resolve();
-        });
+    // Image not found locally — pull it
+  }
+
+  await new Promise<void>((resolve, reject) => {
+    docker.pull(image, (err: Error | null, stream: NodeJS.ReadableStream) => {
+      if (err) return reject(err);
+      docker.modem.followProgress(stream, (err2: Error | null) => {
+        if (err2) return reject(err2);
+        resolve();
       });
     });
-  }
+  });
 }
 
 const DOCKERFILE_HASH = createHash('sha256').update(TELEMT_DOCKERFILE).digest('hex').slice(0, 12);
