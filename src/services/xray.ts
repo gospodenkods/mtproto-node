@@ -203,6 +203,10 @@ export async function createXrayContainer(containerName: string, vless: VlessCon
     HostConfig: {
       NetworkMode: config.dockerNetwork,
       RestartPolicy: { Name: 'unless-stopped' },
+      LogConfig: {
+        Type: 'json-file',
+        Config: { 'max-size': '5m', 'max-file': '2' },
+      },
     },
     ExposedPorts: { '10808/tcp': {} },
   });

@@ -4,6 +4,11 @@ services:
       context: .
     container_name: mtproto-service-node
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     dns:
       - 8.8.8.8
       - 1.1.1.1

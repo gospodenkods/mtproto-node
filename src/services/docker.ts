@@ -192,6 +192,10 @@ export async function createProxyContainer(
       NetworkMode: config.dockerNetwork,
       RestartPolicy: { Name: 'unless-stopped' },
       CapAdd: ['NET_BIND_SERVICE'],
+      LogConfig: {
+        Type: 'json-file',
+        Config: { 'max-size': '5m', 'max-file': '2' },
+      },
     },
   });
 
