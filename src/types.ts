@@ -19,6 +19,7 @@ export interface ProxyConfig {
   trafficDown: number;
   connectedIps: string[];
   maxConnections?: number;
+  nginxPort?: number;        // effective nginx listen port (config.nginxPort)
   listenPort?: number;       // if set and != 443, proxy gets its own TCP port
   vpnSubscription?: string;  // VLESS subscription URL
   vpnContainerName?: string; // xray container name when VPN is active

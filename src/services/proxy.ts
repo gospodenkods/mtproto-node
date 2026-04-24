@@ -98,7 +98,8 @@ export async function listProxies(): Promise<ProxyConfig[]> {
     }
   }
 
-  return proxies;
+  // Attach nginxPort so clients can display the effective connection port
+  return proxies.map((p) => ({ ...p, nginxPort: config.nginxPort }));
 }
 
 export async function getProxy(id: string): Promise<ProxyConfig | undefined> {
