@@ -201,6 +201,7 @@ export async function ensureNginxContainer(): Promise<void> {
     HostConfig: {
       NetworkMode: 'host',
       RestartPolicy: { Name: 'unless-stopped' },
+      Ulimits: [{ Name: 'nofile', Soft: 65536, Hard: 65536 }],
     },
   });
 
