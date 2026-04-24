@@ -100,6 +100,7 @@ ${denyEntries ? denyEntries + '\n' : ''}    }`;
     server {
         listen ${p.listenPort};
         proxy_pass ${target(p, p.listenPort!)};
+        ssl_preread on;
         proxy_connect_timeout 10s;
         proxy_timeout 300s;
 ${denyEntries ? denyEntries + '\n' : ''}        limit_conn port_${p.listenPort} ${p.maxConnections};
@@ -109,6 +110,7 @@ ${denyEntries ? denyEntries + '\n' : ''}        limit_conn port_${p.listenPort} 
     server {
         listen ${p.listenPort};
         proxy_pass ${target(p, p.listenPort!)};
+        ssl_preread on;
         proxy_connect_timeout 10s;
         proxy_timeout 300s;
 ${denyEntries ? denyEntries + '\n' : ''}    }`;
@@ -199,6 +201,7 @@ export async function ensureNginxContainer(): Promise<void> {
     HostConfig: {
       NetworkMode: 'host',
       RestartPolicy: { Name: 'unless-stopped' },
+      Ulimits: [{ Name: 'nofile', Soft: 65536, Hard: 65536 }],
     },
   });
 

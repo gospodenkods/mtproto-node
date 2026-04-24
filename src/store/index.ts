@@ -18,8 +18,20 @@ function readStore(): StoreData {
     fs.writeFileSync(STORE_FILE, JSON.stringify(initial, null, 2));
     return initial;
   }
-  const data = fs.readFileSync(STORE_FILE, 'utf-8');
-  return JSON.parse(data);
+  const raw = fs.readFileSync(STORE_FILE, 'utf-8').trim();
+  if (!raw) {
+    const initial: StoreData = { proxies: [] };
+    fs.writeFileSync(STORE_FILE, JSON.stringify(initial, null, 2));
+    return initial;
+  }
+  try {
+    return JSON.parse(raw);
+  } catch {
+    console.error('store.json is corrupted, resetting to empty state');
+    const initial: StoreData = { proxies: [] };
+    fs.writeFileSync(STORE_FILE, JSON.stringify(initial, null, 2));
+    return initial;
+  }
 }
 
 function writeStore(data: StoreData): void {

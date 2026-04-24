@@ -45,7 +45,6 @@ export async function createProxy(req: ProxyCreateRequest): Promise<ProxyConfig>
   if (req.vpnSubscription) {
     vpnContainerName = `${config.xrayContainerPrefix}${id}`;
     const vlessConfig = await xrayService.fetchAndParseSubscription(req.vpnSubscription);
-    if (!vlessConfig) throw new Error('Failed to parse VPN subscription URL');
     await xrayService.createXrayContainer(vpnContainerName, vlessConfig);
     socks5Host = vpnContainerName;
   }
@@ -99,7 +98,8 @@ export async function listProxies(): Promise<ProxyConfig[]> {
     }
   }
 
-  return proxies;
+  // Attach nginxPort so clients can display the effective connection port
+  return proxies.map((p) => ({ ...p, nginxPort: config.nginxPort }));
 }
 
 export async function getProxy(id: string): Promise<ProxyConfig | undefined> {
@@ -143,7 +143,6 @@ export async function updateProxy(id: string, req: ProxyUpdateRequest): Promise<
     if (req.vpnSubscription) {
       const newVpnName = `${config.xrayContainerPrefix}${id}`;
       const vlessConfig = await xrayService.fetchAndParseSubscription(req.vpnSubscription);
-      if (!vlessConfig) throw new Error('Failed to parse VPN subscription URL');
       await xrayService.createXrayContainer(newVpnName, vlessConfig);
       updates.vpnContainerName = newVpnName;
       updates.vpnSubscription = req.vpnSubscription;
@@ -330,6 +329,68 @@ export function clearProxyHistory(id: string): boolean {
   store.removeStatsHistory(id);
   store.removeIpHistory(id);
   return true;
+}
+
+export interface ExportedProxy {
+  name: string;
+  note: string;
+  secret: string;
+  domain: string;
+  port: number;
+  listenPort?: number;
+  tag?: string;
+  maxConnections?: number;
+  vpnSubscription?: string;
+}
+
+export interface ExportBundle {
+  version: number;
+  exportedAt: string;
+  proxies: ExportedProxy[];
+}
+
+export function exportProxies(): ExportBundle {
+  const proxies = store.getAllProxies();
+  return {
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    proxies: proxies.map((p) => ({
+      name: p.name,
+      note: p.note,
+      secret: p.secret,
+      domain: p.domain,
+      port: p.port,
+      listenPort: p.listenPort,
+      tag: p.tag,
+      maxConnections: p.maxConnections,
+      vpnSubscription: p.vpnSubscription,
+    })),
+  };
+}
+
+export async function importProxies(bundle: ExportBundle): Promise<{ imported: number; errors: string[] }> {
+  const errors: string[] = [];
+  let imported = 0;
+
+  for (const p of bundle.proxies) {
+    try {
+      await createProxy({
+        secret: p.secret,
+        domain: p.domain,
+        name: p.name,
+        note: p.note,
+        listenPort: p.listenPort,
+        tag: p.tag,
+        maxConnections: p.maxConnections,
+        vpnSubscription: p.vpnSubscription,
+      });
+      imported++;
+    } catch (err: any) {
+      errors.push(`${p.name || p.secret}: ${err.message}`);
+    }
+  }
+
+  return { imported, errors };
 }
 
 // Background collector: gather stats + IPs for ALL running proxies

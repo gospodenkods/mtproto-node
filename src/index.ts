@@ -8,7 +8,7 @@ import { ensureNetwork, ensureProxyImage, reconnectContainersToNetwork } from '.
 import { ensureNginxContainer, updateNginxConfig } from './services/nginx';
 import { startNginxLogWatcher } from './services/nginx';
 import { getAllProxies, getCustomDomains, setCustomDomains, getBlacklistedIps, setBlacklistedIps } from './store';
-import { collectAllProxyStats } from './services/proxy';
+import { collectAllProxyStats, exportProxies, importProxies, ExportBundle } from './services/proxy';
 import { execFile } from 'child_process';
 
 const app = express();
@@ -69,6 +69,29 @@ app.put('/api/blacklist', authMiddleware, async (req, res) => {
     // non-fatal
   }
   res.json({ ips: getBlacklistedIps() });
+});
+
+// Export proxy configuration
+app.get('/api/export', authMiddleware, (_req, res) => {
+  const bundle = exportProxies();
+  res.setHeader('Content-Type', 'application/json');
+  res.setHeader('Content-Disposition', `attachment; filename="proxies-export-${new Date().toISOString().slice(0, 10)}.json"`);
+  res.json(bundle);
+});
+
+// Import proxy configuration
+app.post('/api/import', authMiddleware, express.json({ limit: '10mb' }), async (req, res) => {
+  const bundle = req.body as ExportBundle;
+  if (!bundle || bundle.version !== 1 || !Array.isArray(bundle.proxies)) {
+    res.status(400).json({ error: 'Invalid export bundle format' });
+    return;
+  }
+  try {
+    const result = await importProxies(bundle);
+    res.json(result);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 async function bootstrap(): Promise<void> {

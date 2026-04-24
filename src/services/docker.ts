@@ -57,6 +57,10 @@ export async function reconnectContainersToNetwork(): Promise<void> {
     const networks = Object.keys(info.NetworkSettings?.Networks || {});
     if (!networks.includes(config.dockerNetwork)) {
       try {
+        // Skip containers using host network — they cannot join other networks
+        if (networks.includes('host') || info.HostConfig?.NetworkMode === 'host') {
+          continue;
+        }
         await network.connect({ Container: info.Id });
         const name = info.Names[0]?.replace(/^\//, '') || info.Id.slice(0, 12);
         console.log(`Reconnected ${name} to ${config.dockerNetwork}`);
@@ -68,19 +72,23 @@ export async function reconnectContainersToNetwork(): Promise<void> {
 }
 
 export async function pullImage(image: string): Promise<void> {
+  // If the image already exists locally, skip pulling to avoid Docker Hub rate limits
   try {
     await docker.getImage(image).inspect();
+    return;
   } catch {
-    await new Promise<void>((resolve, reject) => {
-      docker.pull(image, (err: Error | null, stream: NodeJS.ReadableStream) => {
-        if (err) return reject(err);
-        docker.modem.followProgress(stream, (err2: Error | null) => {
-          if (err2) return reject(err2);
-          resolve();
-        });
+    // Image not found locally — pull it
+  }
+
+  await new Promise<void>((resolve, reject) => {
+    docker.pull(image, (err: Error | null, stream: NodeJS.ReadableStream) => {
+      if (err) return reject(err);
+      docker.modem.followProgress(stream, (err2: Error | null) => {
+        if (err2) return reject(err2);
+        resolve();
       });
     });
-  }
+  });
 }
 
 const DOCKERFILE_HASH = createHash('sha256').update(TELEMT_DOCKERFILE).digest('hex').slice(0, 12);
@@ -188,6 +196,10 @@ export async function createProxyContainer(
       NetworkMode: config.dockerNetwork,
       RestartPolicy: { Name: 'unless-stopped' },
       CapAdd: ['NET_BIND_SERVICE'],
+      LogConfig: {
+        Type: 'json-file',
+        Config: { 'max-size': '5m', 'max-file': '2' },
+      },
     },
   });
 
