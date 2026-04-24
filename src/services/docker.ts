@@ -57,6 +57,10 @@ export async function reconnectContainersToNetwork(): Promise<void> {
     const networks = Object.keys(info.NetworkSettings?.Networks || {});
     if (!networks.includes(config.dockerNetwork)) {
       try {
+        // Skip containers using host network — they cannot join other networks
+        if (networks.includes('host') || info.HostConfig?.NetworkMode === 'host') {
+          continue;
+        }
         await network.connect({ Container: info.Id });
         const name = info.Names[0]?.replace(/^\//, '') || info.Id.slice(0, 12);
         console.log(`Reconnected ${name} to ${config.dockerNetwork}`);
@@ -206,7 +210,8 @@ export async function createProxyContainer(
 
   // Inject proxychains4.conf if VPN socks5 host specified
   if (socks5Host) {
-    const pcConfig = generateProxychainsConfig(socks5Host);
+    const socks5Ip = await resolveContainerIp(socks5Host);
+    const pcConfig = generateProxychainsConfig(socks5Ip);
     const pcTar = createTarBuffer('proxychains-vpn.conf', pcConfig);
     await container.putArchive(pcTar, { path: '/etc' });
   }
