@@ -100,51 +100,61 @@ async function bootstrap(): Promise<void> {
     console.log('Initializing Docker network...');
     await ensureNetwork();
 
-    console.log('Reconnecting containers to network...');
-    await reconnectContainersToNetwork();
-
-    console.log('Building telemt proxy image...');
-    await ensureProxyImage();
-
-    // Ensure xray (VPN) containers are running BEFORE telemt containers.
-    // After a server reboot Docker starts all containers in parallel; if telemt
-    // starts before xray is ready, proxychains cannot connect and VPN stops
-    // working until the proxy config is manually saved.
-    const xrayContainerNames = getAllProxies()
-      .map((p) => p.vpnContainerName)
-      .filter((n): n is string => !!n);
-    if (xrayContainerNames.length > 0) {
-      console.log(`Ensuring ${xrayContainerNames.length} xray container(s) are running...`);
-      await ensureXrayContainersRunning(xrayContainerNames);
-    }
-
-    console.log('Initializing nginx container...');
-    await ensureNginxContainer();
-
-    const proxies = getAllProxies();
-    if (proxies.length > 0) {
-      console.log(`Restoring nginx config for ${proxies.length} proxies...`);
-      await updateNginxConfig(proxies);
-    }
-
+    // Start HTTP server immediately so health checks pass during heavy init
     app.listen(config.port, '0.0.0.0', () => {
       console.log(`Service node running on port ${config.port}`);
     });
 
-    // Background stats collector — every 5 minutes
-    setInterval(async () => {
+    // Heavy initialization runs in background — does not block the HTTP server
+    (async () => {
       try {
-        await collectAllProxyStats();
+        console.log('Reconnecting containers to network...');
+        await reconnectContainersToNetwork();
+
+        console.log('Building telemt proxy image...');
+        await ensureProxyImage();
+
+        // Ensure xray (VPN) containers are running BEFORE telemt containers.
+        // After a server reboot Docker starts all containers in parallel; if telemt
+        // starts before xray is ready, proxychains cannot connect and VPN stops
+        // working until the proxy config is manually saved.
+        const xrayContainerNames = getAllProxies()
+          .map((p) => p.vpnContainerName)
+          .filter((n): n is string => !!n);
+        if (xrayContainerNames.length > 0) {
+          console.log(`Ensuring ${xrayContainerNames.length} xray container(s) are running...`);
+          await ensureXrayContainersRunning(xrayContainerNames);
+        }
+
+        console.log('Initializing nginx container...');
+        await ensureNginxContainer();
+
+        const proxies = getAllProxies();
+        if (proxies.length > 0) {
+          console.log(`Restoring nginx config for ${proxies.length} proxies...`);
+          await updateNginxConfig(proxies);
+        }
+
+        // Background stats collector — every 5 minutes
+        setInterval(async () => {
+          try {
+            await collectAllProxyStats();
+          } catch (err) {
+            console.error('Background stats collection error:', err);
+          }
+        }, 5 * 60 * 1000);
+
+        // Run first collection after 30 seconds so containers are ready
+        setTimeout(() => collectAllProxyStats().catch(() => {}), 30000);
+
+        // Real-time IP recording from nginx log stream
+        startNginxLogWatcher();
+
+        console.log('Background initialization complete.');
       } catch (err) {
-        console.error('Background stats collection error:', err);
+        console.error('Background initialization error:', err);
       }
-    }, 5 * 60 * 1000);
-
-    // Run first collection after 30 seconds so containers are ready
-    setTimeout(() => collectAllProxyStats().catch(() => {}), 30000);
-
-    // Real-time IP recording from nginx log stream
-    startNginxLogWatcher();
+    })();
   } catch (error) {
     console.error('Failed to start service node:', error);
     process.exit(1);
