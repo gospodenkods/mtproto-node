@@ -8,7 +8,7 @@ const docker = new Docker({ socketPath: '/var/run/docker.sock' });
 const TELEMT_DOCKERFILE = `FROM debian:bookworm-slim
 
 RUN apt-get update && \\
-    apt-get install -y curl wget ca-certificates proxychains4 && \\
+    apt-get install -y curl wget ca-certificates && \\
     rm -rf /var/lib/apt/lists/*
 
 RUN ARCH=$(uname -m) && \\
@@ -25,7 +25,7 @@ USER telemt
 
 ENV RUST_LOG=info
 
-CMD ["/bin/sh", "-c", "if [ -f /etc/proxychains-vpn.conf ]; then exec proxychains4 -f /etc/proxychains-vpn.conf /usr/local/bin/telemt /etc/telemt/config.toml; else exec /usr/local/bin/telemt /etc/telemt/config.toml; fi"]
+CMD ["/usr/local/bin/telemt", "/etc/telemt/config.toml"]
 `;
 
 export async function ensureNetwork(): Promise<void> {
@@ -124,18 +124,6 @@ export async function ensureProxyImage(): Promise<void> {
   }
 }
 
-function generateProxychainsConfig(host: string, port: number): string {
-  return `strict_chain
-quiet_mode
-proxy_dns
-tcp_read_time_out 15000
-tcp_connect_time_out 8000
-
-[ProxyList]
-socks5 ${host} ${port}
-`;
-}
-
 /**
  * If value is a socks5:// URL, parse it and resolve localhost to host.docker.internal.
  * Returns null if it's a plain container name.
@@ -163,17 +151,21 @@ async function resolveContainerIp(containerName: string): Promise<string> {
   throw new Error(`Cannot resolve IP for container ${containerName}`);
 }
 
-function generateConfigToml(secret: string, domain: string, listenPort: number, tag?: string, useVpn?: boolean, maskHost?: string): string {
+function generateConfigToml(secret: string, domain: string, listenPort: number, tag?: string, socks5Host?: string, socks5Port?: number, maskHost?: string): string {
   // use_middle_proxy enables Telegram's promo/ad infrastructure.
-  // VPN only affects network routing, not protocol — so we can use middle proxy
-  // even in VPN mode when a promo tag is set.
-  const useMiddleProxy = !useVpn || !!tag;
+  // With native [[upstreams]] socks5, ME init goes directly (not through VPN),
+  // so use_middle_proxy = true works correctly even in VPN mode.
+  const useMiddleProxy = true;
+  const cleanTag = tag ? tag.trim().replace(/[^0-9a-fA-F]/g, '') : '';
+
   let toml = `[general]
 use_middle_proxy = ${useMiddleProxy ? 'true' : 'false'}
+me2dc_fallback = true
+me_init_retry_attempts = 5
 `;
 
-  if (tag) {
-    toml += `ad_tag = "${tag}"\n`;
+  if (cleanTag.length === 32) {
+    toml += `ad_tag = "${cleanTag}"\n`;
   }
 
   toml += `
@@ -199,6 +191,16 @@ mask = true
 user1 = "${secret}"
 `;
 
+  // Use telemt native SOCKS5 upstream — ME init is NOT routed through SOCKS5,
+  // only Telegram data traffic is. This fixes VPN+promo tag compatibility.
+  if (socks5Host && socks5Port) {
+    toml += `
+[[upstreams]]
+type = "socks5"
+address = "${socks5Host}:${socks5Port}"
+`;
+  }
+
   return toml;
 }
 
@@ -214,12 +216,24 @@ export async function createProxyContainer(
   await ensureNetwork();
   await ensureProxyImage();
 
-  // Resolve socks5:// URL vs container name
+  // Resolve socks5:// URL vs container name, determine host/port for native upstream
   const directSocks5 = socks5Host ? parseSocks5Url(socks5Host) : null;
+  let resolvedSocks5Host: string | undefined;
+  let resolvedSocks5Port: number | undefined;
+  if (socks5Host) {
+    if (directSocks5) {
+      resolvedSocks5Host = directSocks5.host;
+      resolvedSocks5Port = directSocks5.port;
+    } else {
+      resolvedSocks5Host = await resolveContainerIp(socks5Host);
+      resolvedSocks5Port = 10808;
+    }
+  }
 
   // Resolve maskHost: replace loopback with host.docker.internal
   let resolvedMaskHost: string | undefined;
   let needsHostGateway = directSocks5?.host === 'host.docker.internal';
+  if (resolvedSocks5Host === 'host.docker.internal') needsHostGateway = true;
   if (maskHost) {
     const colonIdx = maskHost.lastIndexOf(':');
     const mHost = colonIdx === -1 ? maskHost : maskHost.slice(0, colonIdx);
@@ -248,25 +262,9 @@ export async function createProxyContainer(
   });
 
   // Inject config.toml into the container before starting
-  const configContent = generateConfigToml(secret, domain, listenPort, tag, !!socks5Host, resolvedMaskHost);
+  const configContent = generateConfigToml(secret, domain, listenPort, tag, resolvedSocks5Host, resolvedSocks5Port, resolvedMaskHost);
   const tarBuffer = createTarBuffer('config.toml', configContent);
   await container.putArchive(tarBuffer, { path: '/etc/telemt' });
-
-  // Inject proxychains4.conf if VPN socks5 host specified
-  if (socks5Host) {
-    let pcHost: string;
-    let pcPort: number;
-    if (directSocks5) {
-      pcHost = directSocks5.host;
-      pcPort = directSocks5.port;
-    } else {
-      pcHost = await resolveContainerIp(socks5Host);
-      pcPort = 10808;
-    }
-    const pcConfig = generateProxychainsConfig(pcHost, pcPort);
-    const pcTar = createTarBuffer('proxychains-vpn.conf', pcConfig);
-    await container.putArchive(pcTar, { path: '/etc' });
-  }
 
   await container.start();
   return container.id;
