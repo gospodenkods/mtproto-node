@@ -191,10 +191,15 @@ mask = true
 user1 = "${secret}"
 `;
 
-  // Use telemt native SOCKS5 upstream — ME init is NOT routed through SOCKS5,
-  // only Telegram data traffic is. This fixes VPN+promo tag compatibility.
+  // Use telemt native SOCKS5 upstream — ME connections are routed directly
+  // via the explicit "me" scoped direct upstream, so ME registration sees
+  // the real proxy IP (not the VPN exit IP). Only DC traffic goes through SOCKS5.
   if (socks5Host && socks5Port) {
     toml += `
+[[upstreams]]
+type = "direct"
+scopes = "me, fetch"
+
 [[upstreams]]
 type = "socks5"
 address = "${socks5Host}:${socks5Port}"
