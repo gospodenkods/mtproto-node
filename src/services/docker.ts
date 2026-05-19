@@ -124,7 +124,7 @@ export async function ensureProxyImage(): Promise<void> {
   }
 }
 
-function generateProxychainsConfig(socks5Ip: string): string {
+function generateProxychainsConfig(host: string, port: number): string {
   return `strict_chain
 quiet_mode
 proxy_dns
@@ -132,8 +132,22 @@ tcp_read_time_out 15000
 tcp_connect_time_out 8000
 
 [ProxyList]
-socks5 ${socks5Ip} 10808
+socks5 ${host} ${port}
 `;
+}
+
+/**
+ * If value is a socks5:// URL, parse it and resolve localhost to host.docker.internal.
+ * Returns null if it's a plain container name.
+ */
+function parseSocks5Url(value: string): { host: string; port: number } | null {
+  if (!value.startsWith('socks5://')) return null;
+  const withoutScheme = value.slice('socks5://'.length);
+  const colonIdx = withoutScheme.lastIndexOf(':');
+  const rawHost = colonIdx === -1 ? withoutScheme : withoutScheme.slice(0, colonIdx);
+  const port = colonIdx === -1 ? 1080 : (parseInt(withoutScheme.slice(colonIdx + 1), 10) || 1080);
+  const host = (rawHost === '127.0.0.1' || rawHost === 'localhost') ? 'host.docker.internal' : rawHost;
+  return { host, port };
 }
 
 async function resolveContainerIp(containerName: string): Promise<string> {
@@ -149,7 +163,7 @@ async function resolveContainerIp(containerName: string): Promise<string> {
   throw new Error(`Cannot resolve IP for container ${containerName}`);
 }
 
-function generateConfigToml(secret: string, domain: string, listenPort: number, tag?: string, useVpn?: boolean): string {
+function generateConfigToml(secret: string, domain: string, listenPort: number, tag?: string, useVpn?: boolean, maskHost?: string): string {
   let toml = `[general]
 use_middle_proxy = ${useVpn ? 'false' : 'true'}
 `;
@@ -170,7 +184,13 @@ port = ${listenPort || 443}
 [censorship]
 tls_domain = "${domain}"
 mask = true
+`;
 
+  if (maskHost) {
+    toml += `mask_host = "${maskHost}"\n`;
+  }
+
+  toml += `
 [access.users]
 user1 = "${secret}"
 `;
@@ -184,10 +204,29 @@ export async function createProxyContainer(
   domain: string,
   listenPort: number,
   tag?: string,
-  socks5Host?: string
+  socks5Host?: string,
+  maskHost?: string
 ): Promise<string> {
   await ensureNetwork();
   await ensureProxyImage();
+
+  // Resolve socks5:// URL vs container name
+  const directSocks5 = socks5Host ? parseSocks5Url(socks5Host) : null;
+
+  // Resolve maskHost: replace loopback with host.docker.internal
+  let resolvedMaskHost: string | undefined;
+  let needsHostGateway = directSocks5?.host === 'host.docker.internal';
+  if (maskHost) {
+    const colonIdx = maskHost.lastIndexOf(':');
+    const mHost = colonIdx === -1 ? maskHost : maskHost.slice(0, colonIdx);
+    const mPort = colonIdx === -1 ? '' : maskHost.slice(colonIdx);
+    if (mHost === '127.0.0.1' || mHost === 'localhost') {
+      resolvedMaskHost = `host.docker.internal${mPort}`;
+      needsHostGateway = true;
+    } else {
+      resolvedMaskHost = maskHost;
+    }
+  }
 
   const container = await docker.createContainer({
     Image: config.proxyImageName,
@@ -200,18 +239,27 @@ export async function createProxyContainer(
         Type: 'json-file',
         Config: { 'max-size': '5m', 'max-file': '2' },
       },
+      ...(needsHostGateway ? { ExtraHosts: ['host.docker.internal:host-gateway'] } : {}),
     },
   });
 
   // Inject config.toml into the container before starting
-  const configContent = generateConfigToml(secret, domain, listenPort, tag, !!socks5Host);
+  const configContent = generateConfigToml(secret, domain, listenPort, tag, !!socks5Host, resolvedMaskHost);
   const tarBuffer = createTarBuffer('config.toml', configContent);
   await container.putArchive(tarBuffer, { path: '/etc/telemt' });
 
   // Inject proxychains4.conf if VPN socks5 host specified
   if (socks5Host) {
-    const socks5Ip = await resolveContainerIp(socks5Host);
-    const pcConfig = generateProxychainsConfig(socks5Ip);
+    let pcHost: string;
+    let pcPort: number;
+    if (directSocks5) {
+      pcHost = directSocks5.host;
+      pcPort = directSocks5.port;
+    } else {
+      pcHost = await resolveContainerIp(socks5Host);
+      pcPort = 10808;
+    }
+    const pcConfig = generateProxychainsConfig(pcHost, pcPort);
     const pcTar = createTarBuffer('proxychains-vpn.conf', pcConfig);
     await container.putArchive(pcTar, { path: '/etc' });
   }

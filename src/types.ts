@@ -23,6 +23,7 @@ export interface ProxyConfig {
   listenPort?: number;       // if set and != 443, proxy gets its own TCP port
   vpnSubscription?: string;  // VLESS subscription URL
   vpnContainerName?: string; // xray container name when VPN is active
+  maskHost?: string;         // self-steal fallback host:port (non-MTProto traffic redirect)
 }
 
 export interface ProxyCreateRequest {
@@ -35,6 +36,7 @@ export interface ProxyCreateRequest {
   maxConnections?: number;
   listenPort?: number;
   vpnSubscription?: string;
+  maskHost?: string;
 }
 
 export interface ProxyUpdateRequest {
@@ -44,6 +46,7 @@ export interface ProxyUpdateRequest {
   note?: string;
   maxConnections?: number;
   vpnSubscription?: string;
+  maskHost?: string;
 }
 
 export interface ProxyStats {
