@@ -9,6 +9,7 @@ import { ensureNginxContainer, updateNginxConfig } from './services/nginx';
 import { startNginxLogWatcher } from './services/nginx';
 import { getAllProxies, getCustomDomains, setCustomDomains, getBlacklistedIps, setBlacklistedIps } from './store';
 import { collectAllProxyStats, exportProxies, importProxies, ExportBundle } from './services/proxy';
+import { ensureXrayContainersRunning } from './services/xray';
 import { execFile } from 'child_process';
 
 const app = express();
@@ -104,6 +105,18 @@ async function bootstrap(): Promise<void> {
 
     console.log('Building telemt proxy image...');
     await ensureProxyImage();
+
+    // Ensure xray (VPN) containers are running BEFORE telemt containers.
+    // After a server reboot Docker starts all containers in parallel; if telemt
+    // starts before xray is ready, proxychains cannot connect and VPN stops
+    // working until the proxy config is manually saved.
+    const xrayContainerNames = getAllProxies()
+      .map((p) => p.vpnContainerName)
+      .filter((n): n is string => !!n);
+    if (xrayContainerNames.length > 0) {
+      console.log(`Ensuring ${xrayContainerNames.length} xray container(s) are running...`);
+      await ensureXrayContainersRunning(xrayContainerNames);
+    }
 
     console.log('Initializing nginx container...');
     await ensureNginxContainer();
