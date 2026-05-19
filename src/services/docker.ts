@@ -164,8 +164,12 @@ async function resolveContainerIp(containerName: string): Promise<string> {
 }
 
 function generateConfigToml(secret: string, domain: string, listenPort: number, tag?: string, useVpn?: boolean, maskHost?: string): string {
+  // use_middle_proxy enables Telegram's promo/ad infrastructure.
+  // VPN only affects network routing, not protocol — so we can use middle proxy
+  // even in VPN mode when a promo tag is set.
+  const useMiddleProxy = !useVpn || !!tag;
   let toml = `[general]
-use_middle_proxy = ${useVpn ? 'false' : 'true'}
+use_middle_proxy = ${useMiddleProxy ? 'true' : 'false'}
 `;
 
   if (tag) {
