@@ -175,8 +175,33 @@ function writeIpHistory(data: IpHistoryData): void {
   fs.writeFileSync(IP_HISTORY_FILE, JSON.stringify(data));
 }
 
+// In-memory cache — avoids disk read/write on every nginx log line.
+// Without this, 100+ connections/sec each trigger a full JSON read+write,
+// causing CPU and I/O spikes (especially after logrotate reconnect at 3 AM).
+let ipHistoryCache: IpHistoryData | null = null;
+let ipHistoryDirty = false;
+let ipHistoryFlushTimer: ReturnType<typeof setTimeout> | null = null;
+
+function getIpHistoryCache(): IpHistoryData {
+  if (!ipHistoryCache) {
+    ipHistoryCache = readIpHistory();
+  }
+  return ipHistoryCache;
+}
+
+function scheduleIpHistoryFlush(): void {
+  if (ipHistoryFlushTimer) return;
+  ipHistoryFlushTimer = setTimeout(() => {
+    ipHistoryFlushTimer = null;
+    if (ipHistoryDirty && ipHistoryCache) {
+      writeIpHistory(ipHistoryCache);
+      ipHistoryDirty = false;
+    }
+  }, 10000); // flush to disk at most once every 10 seconds
+}
+
 export function updateIpHistory(proxyId: string, connectedIps: { ip: string; country?: string; countryCode?: string }[]): void {
-  const history = readIpHistory();
+  const history = getIpHistoryCache();
   if (!history[proxyId]) history[proxyId] = [];
   const arr = history[proxyId];
   const now = new Date().toISOString();
@@ -198,16 +223,17 @@ export function updateIpHistory(proxyId: string, connectedIps: { ip: string; cou
     }
   }
 
-  writeIpHistory(history);
+  ipHistoryDirty = true;
+  scheduleIpHistoryFlush();
 }
 
 export function getIpHistory(proxyId: string): IpHistoryEntry[] {
-  const history = readIpHistory();
-  return history[proxyId] || [];
+  return getIpHistoryCache()[proxyId] || [];
 }
 
 export function removeIpHistory(proxyId: string): void {
-  const history = readIpHistory();
+  const history = getIpHistoryCache();
   delete history[proxyId];
-  writeIpHistory(history);
+  ipHistoryDirty = true;
+  scheduleIpHistoryFlush();
 }

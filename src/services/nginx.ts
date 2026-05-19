@@ -470,16 +470,28 @@ async function watchNginxLogs(): Promise<void> {
     since: Math.floor(Date.now() / 1000),
   }) as unknown as NodeJS.ReadableStream;
 
-  let buf = '';
+  // Docker multiplexed log stream: each frame has an 8-byte header
+  // [stream_type(1), padding(3), payload_size(4 BE)] followed by payload bytes.
+  // The size bytes can contain printable ASCII digits (e.g. 0x34='4') which
+  // would corrupt IP addresses if we naively convert the whole chunk to string.
+  let rawBuf = Buffer.alloc(0);
+  let textBuf = '';
   await new Promise<void>((resolve, reject) => {
     stream.on('data', (chunk: Buffer) => {
-      // Docker log stream has 8-byte frame headers; strip control chars and parse lines
-      buf += chunk.toString('utf-8').replace(/[\x00-\x08\x0e-\x1f]/g, '');
-      const lines = buf.split('\n');
-      buf = lines.pop() ?? '';
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (trimmed) processNginxLogLine(trimmed);
+      rawBuf = Buffer.concat([rawBuf, chunk]);
+      // Consume complete frames from rawBuf
+      while (rawBuf.length >= 8) {
+        const payloadSize = rawBuf.readUInt32BE(4);
+        if (rawBuf.length < 8 + payloadSize) break; // wait for more data
+        textBuf += rawBuf.slice(8, 8 + payloadSize).toString('utf-8');
+        rawBuf = rawBuf.slice(8 + payloadSize);
+        // Process complete lines
+        const lines = textBuf.split('\n');
+        textBuf = lines.pop() ?? '';
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (trimmed) processNginxLogLine(trimmed);
+        }
       }
     });
     stream.on('end', resolve);
