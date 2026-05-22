@@ -169,7 +169,8 @@ export async function updateProxy(id: string, req: ProxyUpdateRequest): Promise<
       proxy.listenPort || config.nginxPort,
       updates.tag !== undefined ? updates.tag : proxy.tag,
       newSocks5Host,
-      updates.maskHost !== undefined ? updates.maskHost : proxy.maskHost
+      updates.maskHost !== undefined ? updates.maskHost : proxy.maskHost,
+      config.natIp || undefined
     );
   }
 
@@ -193,7 +194,8 @@ export async function restartProxy(id: string): Promise<ProxyConfig | undefined>
     proxy.listenPort || config.nginxPort,
     proxy.tag,
     proxy.vpnContainerName,
-    proxy.maskHost
+    proxy.maskHost,
+    config.natIp || undefined
   );
 
   const updated = store.updateProxy(id, { status: 'running' });
