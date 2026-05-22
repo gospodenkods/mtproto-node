@@ -151,18 +151,30 @@ async function resolveContainerIp(containerName: string): Promise<string> {
   throw new Error(`Cannot resolve IP for container ${containerName}`);
 }
 
-function generateConfigToml(secret: string, domain: string, listenPort: number, tag?: string, socks5Host?: string, socks5Port?: number, maskHost?: string): string {
-  // use_middle_proxy enables Telegram's promo/ad infrastructure.
-  // With native [[upstreams]] socks5, ME init goes directly (not through VPN),
-  // so use_middle_proxy = true works correctly even in VPN mode.
-  const useMiddleProxy = true;
+function generateConfigToml(
+  secret: string,
+  domain: string,
+  listenPort: number,
+  tag?: string,
+  socks5Host?: string,
+  socks5Port?: number,
+  maskHost?: string,
+  natIp?: string,
+): string {
   const cleanTag = tag ? tag.trim().replace(/[^0-9a-fA-F]/g, '') : '';
 
   let toml = `[general]
-use_middle_proxy = ${useMiddleProxy ? 'true' : 'false'}
+use_middle_proxy = true
 me2dc_fallback = true
 me_init_retry_attempts = 5
 `;
+
+  // VPN mode: tell ME servers to expect connections from the VPN exit IP.
+  // ME traffic uses direct routing; host iptables marks port-8888 packets
+  // and routes them via tun0 so the source IP seen by ME servers = natIp.
+  if (natIp) {
+    toml += `middle_proxy_nat_ip = "${natIp}"\n`;
+  }
 
   if (cleanTag.length === 32) {
     toml += `ad_tag = "${cleanTag}"\n`;
@@ -191,10 +203,20 @@ mask = true
 user1 = "${secret}"
 `;
 
-  // Use telemt native SOCKS5 upstream — ME connections are routed directly
-  // via the explicit "me" scoped direct upstream, so ME registration sees
-  // the real proxy IP (not the VPN exit IP). Only DC traffic goes through SOCKS5.
-  if (socks5Host && socks5Port) {
+  if (natIp && socks5Host && socks5Port) {
+    // Hybrid mode: ME goes direct (host routes it via tun0 → EU IP for KDF);
+    // DC traffic goes through xray/SOCKS5 to bypass RKN.
+    toml += `
+[[upstreams]]
+type = "direct"
+scopes = "me"
+
+[[upstreams]]
+type = "socks5"
+address = "${socks5Host}:${socks5Port}"
+`;
+  } else if (!natIp && socks5Host && socks5Port) {
+    // Legacy mode: ME and fetch go direct; DC goes through SOCKS5.
     toml += `
 [[upstreams]]
 type = "direct"
@@ -205,6 +227,7 @@ type = "socks5"
 address = "${socks5Host}:${socks5Port}"
 `;
   }
+  // natIp only (no socks5): all traffic direct via tun0 — simple mode.
 
   return toml;
 }
@@ -216,7 +239,8 @@ export async function createProxyContainer(
   listenPort: number,
   tag?: string,
   socks5Host?: string,
-  maskHost?: string
+  maskHost?: string,
+  natIp?: string,
 ): Promise<string> {
   await ensureNetwork();
   await ensureProxyImage();
@@ -267,7 +291,7 @@ export async function createProxyContainer(
   });
 
   // Inject config.toml into the container before starting
-  const configContent = generateConfigToml(secret, domain, listenPort, tag, resolvedSocks5Host, resolvedSocks5Port, resolvedMaskHost);
+  const configContent = generateConfigToml(secret, domain, listenPort, tag, resolvedSocks5Host, resolvedSocks5Port, resolvedMaskHost, natIp);
   const tarBuffer = createTarBuffer('config.toml', configContent);
   await container.putArchive(tarBuffer, { path: '/etc/telemt' });
 
