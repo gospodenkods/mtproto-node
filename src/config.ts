@@ -12,11 +12,11 @@ export const config = {
   xrayContainerPrefix: 'mtproto-xray-',
   portRangeStart: 10001,
   portRangeEnd: 19999,
-  // VPN mode: public IP of the VPN exit node (EU VPS).
-  // When set, telemt advertises this IP to Telegram ME servers for KDF verification.
-  // ME connections use direct routing (host routes them via tun0);
-  // DC connections still go through xray/SOCKS5 to bypass RKN.
+  // Tunnel mode defaults (can be overridden per proxy from the panel).
+  // NAT_IP: public IP of the tunnel exit node (EU VPS).
+  // TUNNEL_INTERFACE: TUN/TAP interface name, e.g. tun0.
   natIp: process.env.NAT_IP || '',
+  tunnelInterface: process.env.TUNNEL_INTERFACE || '',
 };
 
 export const FAKE_TLS_DOMAINS = [

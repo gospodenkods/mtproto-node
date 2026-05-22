@@ -68,10 +68,12 @@ export async function createProxy(req: ProxyCreateRequest): Promise<ProxyConfig>
     vpnSubscription: req.vpnSubscription,
     vpnContainerName,
     maskHost: req.maskHost,
+    natIp: req.natIp || config.natIp || undefined,
+    tunnelInterface: req.tunnelInterface || config.tunnelInterface || undefined,
   };
 
   try {
-    await dockerService.createProxyContainer(containerName, secret, domain, req.listenPort || config.nginxPort, req.tag, socks5Host, req.maskHost, config.natIp || undefined);
+    await dockerService.createProxyContainer(containerName, secret, domain, req.listenPort || config.nginxPort, req.tag, socks5Host, req.maskHost, req.natIp || config.natIp || undefined);
     store.addProxy(proxy);
     await nginxService.updateNginxConfig(store.getAllProxies());
     return proxy;
@@ -137,6 +139,15 @@ export async function updateProxy(id: string, req: ProxyUpdateRequest): Promise<
     needsRestart = true;
   }
 
+  // Handle natIp / tunnelInterface changes
+  if (req.natIp !== undefined && req.natIp !== (proxy.natIp || '')) {
+    updates.natIp = req.natIp || undefined;
+    needsRestart = true;
+  }
+  if (req.tunnelInterface !== undefined) {
+    updates.tunnelInterface = req.tunnelInterface || undefined;
+  }
+
   // Handle VPN subscription change
   let newSocks5Host: string | undefined = proxy.vpnContainerName;
   if (req.vpnSubscription !== undefined && req.vpnSubscription !== proxy.vpnSubscription) {
@@ -162,6 +173,7 @@ export async function updateProxy(id: string, req: ProxyUpdateRequest): Promise<
 
   if (needsRestart) {
     await dockerService.removeProxyContainer(proxy.containerName);
+    const effectiveNatIp = updates.natIp !== undefined ? updates.natIp : (proxy.natIp || config.natIp || undefined);
     await dockerService.createProxyContainer(
       proxy.containerName,
       proxy.secret,
@@ -170,7 +182,7 @@ export async function updateProxy(id: string, req: ProxyUpdateRequest): Promise<
       updates.tag !== undefined ? updates.tag : proxy.tag,
       newSocks5Host,
       updates.maskHost !== undefined ? updates.maskHost : proxy.maskHost,
-      config.natIp || undefined
+      effectiveNatIp
     );
   }
 
