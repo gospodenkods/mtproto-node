@@ -73,9 +73,18 @@ echo -e "  Ветка: ${YELLOW}${BRANCH}${NC}"
 git pull origin "$BRANCH"
 git stash pop 2>/dev/null || true
 
-echo -e "${CYAN}[4/5] Сборка и запуск обновлённой сервис-ноды...${NC}"
+echo -e "${CYAN}[4/5] Загрузка и запуск обновлённой сервис-ноды...${NC}"
+export COMPOSE_PROJECT_NAME=mtproto-node
 docker network create mtproto-net 2>/dev/null || true
-docker compose up -d --build
+
+echo -e "  Загрузка образа из GHCR..."
+if docker compose pull 2>/dev/null; then
+    echo -e "  ${GREEN}Образ загружен из GHCR${NC}"
+else
+    echo -e "${YELLOW}  Не удалось загрузить образ, собираем локально...${NC}"
+    docker compose build
+fi
+docker compose up -d
 
 # Ждём пока сервис-нода поднимется
 echo -e "  Ожидание запуска сервис-ноды..."

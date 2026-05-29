@@ -155,16 +155,22 @@ EOF
 mkdir -p data
 
 # Build and start
-echo -e "${CYAN}Сборка и запуск сервис-ноды...${NC}"
+echo -e "${CYAN}Запуск сервис-ноды...${NC}"
+export COMPOSE_PROJECT_NAME=mtproto-node
 docker network create mtproto-net 2>/dev/null || true
-docker build --network=host -t mtproto-node-service-node .
-if [ $? -ne 0 ]; then
-    echo -e "${RED}Ошибка при сборке образа.${NC}"
-    exit 1
-fi
-docker compose up -d
 
-if [ $? -ne 0 ]; then
+echo -e "  Загрузка образа из GHCR..."
+if docker compose pull 2>/dev/null; then
+    echo -e "  ${GREEN}Образ загружен из GHCR${NC}"
+else
+    echo -e "${YELLOW}  Не удалось загрузить образ, собираем локально (может занять несколько минут)...${NC}"
+    if ! docker compose build; then
+        echo -e "${RED}Ошибка при сборке образа.${NC}"
+        exit 1
+    fi
+fi
+
+if ! docker compose up -d; then
     echo -e "${RED}Ошибка при запуске контейнеров.${NC}"
     exit 1
 fi
