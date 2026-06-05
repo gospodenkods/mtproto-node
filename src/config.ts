@@ -12,6 +12,11 @@ export const config = {
   xrayContainerPrefix: 'mtproto-xray-',
   portRangeStart: 10001,
   portRangeEnd: 19999,
+  // Tunnel mode defaults (can be overridden per proxy from the panel).
+  // NAT_IP: public IP of the tunnel exit node (EU VPS).
+  // TUNNEL_INTERFACE: TUN/TAP interface name, e.g. tun0.
+  natIp: process.env.NAT_IP || '',
+  tunnelInterface: process.env.TUNNEL_INTERFACE || '',
 };
 
 export const FAKE_TLS_DOMAINS = [

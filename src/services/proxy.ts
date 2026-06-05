@@ -67,10 +67,13 @@ export async function createProxy(req: ProxyCreateRequest): Promise<ProxyConfig>
     listenPort: req.listenPort,
     vpnSubscription: req.vpnSubscription,
     vpnContainerName,
+    maskHost: req.maskHost,
+    natIp: req.natIp || config.natIp || undefined,
+    tunnelInterface: req.tunnelInterface || config.tunnelInterface || undefined,
   };
 
   try {
-    await dockerService.createProxyContainer(containerName, secret, domain, req.listenPort || config.nginxPort, req.tag, socks5Host);
+    await dockerService.createProxyContainer(containerName, secret, domain, req.listenPort || config.nginxPort, req.tag, socks5Host, req.maskHost, req.natIp || config.natIp || undefined);
     store.addProxy(proxy);
     await nginxService.updateNginxConfig(store.getAllProxies());
     return proxy;
@@ -130,6 +133,21 @@ export async function updateProxy(id: string, req: ProxyUpdateRequest): Promise<
   if (req.note !== undefined) updates.note = req.note;
   if (req.maxConnections !== undefined) updates.maxConnections = req.maxConnections;
 
+  // Handle maskHost change
+  if (req.maskHost !== undefined && req.maskHost !== proxy.maskHost) {
+    updates.maskHost = req.maskHost;
+    needsRestart = true;
+  }
+
+  // Handle natIp / tunnelInterface changes
+  if (req.natIp !== undefined && req.natIp !== (proxy.natIp || '')) {
+    updates.natIp = req.natIp || undefined;
+    needsRestart = true;
+  }
+  if (req.tunnelInterface !== undefined) {
+    updates.tunnelInterface = req.tunnelInterface || undefined;
+  }
+
   // Handle VPN subscription change
   let newSocks5Host: string | undefined = proxy.vpnContainerName;
   if (req.vpnSubscription !== undefined && req.vpnSubscription !== proxy.vpnSubscription) {
@@ -155,13 +173,16 @@ export async function updateProxy(id: string, req: ProxyUpdateRequest): Promise<
 
   if (needsRestart) {
     await dockerService.removeProxyContainer(proxy.containerName);
+    const effectiveNatIp = updates.natIp !== undefined ? updates.natIp : (proxy.natIp || config.natIp || undefined);
     await dockerService.createProxyContainer(
       proxy.containerName,
       proxy.secret,
       updates.domain || proxy.domain,
       proxy.listenPort || config.nginxPort,
       updates.tag !== undefined ? updates.tag : proxy.tag,
-      newSocks5Host
+      newSocks5Host,
+      updates.maskHost !== undefined ? updates.maskHost : proxy.maskHost,
+      effectiveNatIp
     );
   }
 
@@ -184,7 +205,9 @@ export async function restartProxy(id: string): Promise<ProxyConfig | undefined>
     proxy.domain,
     proxy.listenPort || config.nginxPort,
     proxy.tag,
-    proxy.vpnContainerName
+    proxy.vpnContainerName,
+    proxy.maskHost,
+    config.natIp || undefined
   );
 
   const updated = store.updateProxy(id, { status: 'running' });

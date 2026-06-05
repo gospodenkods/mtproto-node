@@ -285,6 +285,34 @@ export async function removeXrayContainer(containerName: string): Promise<void> 
   }
 }
 
+/**
+ * Called on bootstrap: ensures all xray containers are running before telemt
+ * containers start. Without this, after a server reboot telemt may start before
+ * xray is ready and proxychains fails to connect — requiring a manual config save.
+ */
+export async function ensureXrayContainersRunning(containerNames: string[]): Promise<void> {
+  const toStart: string[] = [];
+
+  for (const name of containerNames) {
+    try {
+      const container = docker.getContainer(name);
+      const info = await container.inspect();
+      if (!info.State.Running) {
+        await container.start();
+        toStart.push(name);
+        console.log(`Started xray container ${name}`);
+      }
+    } catch (err: any) {
+      console.error(`Could not ensure xray container ${name}:`, err.message);
+    }
+  }
+
+  // Give xray containers a moment to bind their SOCKS5 port before telemt connects
+  if (toStart.length > 0) {
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+  }
+}
+
 function createTarBuffer(filename: string, content: string): Buffer {
   const contentBuffer = Buffer.from(content, 'utf-8');
   const header = Buffer.alloc(512);

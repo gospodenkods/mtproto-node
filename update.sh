@@ -70,22 +70,65 @@ else
 fi
 echo -e "  Ветка: ${YELLOW}${BRANCH}${NC}"
 
-git pull origin "$BRANCH"
+git fetch origin "$BRANCH"
+git reset --hard "origin/$BRANCH"
 git stash pop 2>/dev/null || true
 
-echo -e "${CYAN}[4/5] Сборка и запуск обновлённой сервис-ноды...${NC}"
+echo -e "${CYAN}[4/5] Загрузка и запуск обновлённой сервис-ноды...${NC}"
+export COMPOSE_PROJECT_NAME=mtproto-node
 docker network create mtproto-net 2>/dev/null || true
-docker compose up -d --build
 
-# Ждём пока сервис-нода поднимется
-echo -e "  Ожидание запуска сервис-ноды..."
-sleep 5
+echo -e "  Загрузка образа из GHCR..."
+if docker compose pull 2>/dev/null; then
+    echo -e "  ${GREEN}Образ загружен из GHCR${NC}"
+else
+    echo -e "${YELLOW}  Не удалось загрузить образ, собираем локально...${NC}"
+    docker compose build
+fi
+docker compose up -d
 
 # Проверяем что контейнер запустился
 if ! docker ps --format '{{.Names}}' | grep -q 'mtproto-service-node'; then
     echo -e "${RED}Ошибка: контейнер сервис-ноды не запустился!${NC}"
     echo -e "Проверьте логи: docker compose logs"
     exit 1
+fi
+
+# Ждём пока API поднимется и фоновая инициализация начнётся
+echo -e "  Ожидание запуска API сервис-ноды..."
+READY=0
+for _ in $(seq 1 30); do
+    if curl -fsS "http://localhost:${PORT:-8443}/api/health" >/dev/null 2>&1; then
+        READY=1
+        break
+    fi
+    sleep 2
+done
+
+if [ "$READY" -ne 1 ]; then
+    echo -e "${RED}Ошибка: API сервис-ноды не отвечает.${NC}"
+    echo -e "Проверьте логи: docker compose logs"
+    exit 1
+fi
+
+# Если были запущенные прокси, дожидаемся готовности proxy image.
+# Иначе восстановление может попасть в гонку с фоновым bootstrap внутри ноды.
+if [ -n "$RUNNING_PROXIES" ]; then
+    echo -e "  Ожидание готовности образа telemt-proxy-v4..."
+    IMAGE_READY=0
+    for _ in $(seq 1 60); do
+        if docker image inspect telemt-proxy-v4 >/dev/null 2>&1; then
+            IMAGE_READY=1
+            break
+        fi
+        sleep 2
+    done
+
+    if [ "$IMAGE_READY" -ne 1 ]; then
+        echo -e "${RED}Ошибка: образ telemt-proxy-v4 не был собран вовремя.${NC}"
+        echo -e "Проверьте логи: docker compose logs"
+        exit 1
+    fi
 fi
 
 echo -e "${CYAN}[5/5] Восстановление прокси...${NC}"
@@ -117,12 +160,20 @@ if [ "$PROXIES_RESPONSE" != "[]" ] && [ -n "$PROXIES_RESPONSE" ]; then
             STATUS=$(echo "$STATUS_RESPONSE" | grep -o '"status":"[^"]*"' | head -1 | cut -d'"' -f4)
 
             if [ "$STATUS" != "running" ]; then
-                # Пересоздаём контейнер прокси через restart endpoint
-                RESULT=$(curl -s -w "%{http_code}" -o /dev/null \
-                    -X POST \
-                    -H "Authorization: Bearer ${AUTH_TOKEN}" \
-                    -H "Content-Type: application/json" \
-                    "http://localhost:${PORT}/api/proxies/${PROXY_ID}/restart" 2>/dev/null || echo "000")
+                # Пересоздаём контейнер прокси через restart endpoint.
+                # После обновления нода может ещё завершать bootstrap, поэтому делаем несколько попыток.
+                RESULT="000"
+                for _ in $(seq 1 5); do
+                    RESULT=$(curl -s -w "%{http_code}" -o /dev/null \
+                        -X POST \
+                        -H "Authorization: Bearer ${AUTH_TOKEN}" \
+                        -H "Content-Type: application/json" \
+                        "http://localhost:${PORT}/api/proxies/${PROXY_ID}/restart" 2>/dev/null || echo "000")
+                    if [ "$RESULT" = "200" ]; then
+                        break
+                    fi
+                    sleep 3
+                done
 
                 if [ "$RESULT" = "200" ]; then
                     RESTORED=$((RESTORED + 1))
