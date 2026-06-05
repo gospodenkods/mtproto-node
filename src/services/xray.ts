@@ -10,15 +10,18 @@ export interface VlessConfig {
   host: string;
   port: number;
   security: string; // 'none' | 'tls' | 'reality'
-  network: string;  // 'tcp' | 'ws' | 'grpc'
+  network: string;  // 'tcp' | 'ws' | 'grpc' | 'xhttp'
   sni: string;
   fingerprint: string;
   publicKey?: string; // REALITY public key
   shortId?: string;   // REALITY short ID
   flow?: string;
-  wsPath?: string;
-  wsHost?: string;
+  path?: string;
+  hostHeader?: string;
   grpcServiceName?: string;
+  mode?: string;
+  extra?: Record<string, any>;
+  alpn?: string[];
 }
 
 export async function fetchAndParseSubscription(input: string): Promise<VlessConfig> {
@@ -96,33 +99,83 @@ function parseVlessUri(uri: string): VlessConfig | null {
     const params = new URLSearchParams(queryStr);
 
     const security = params.get('security') || 'none';
-    const network = params.get('type') || params.get('network') || 'tcp';
+    const networkParam = (params.get('type') || params.get('network') || 'tcp').toLowerCase();
+    const network = ['ws', 'grpc', 'xhttp'].includes(networkParam) ? networkParam : 'tcp';
     const sni = params.get('sni') || params.get('peer') || params.get('servername') || host;
     const fingerprint = params.get('fp') || 'chrome';
     const publicKey = params.get('pbk') || undefined;
     const shortId = params.get('sid') || undefined;
     const flow = params.get('flow') || undefined;
-    const wsPath = params.get('path') || '/';
-    const wsHost = params.get('host') || sni;
+    const path = params.get('path') || '/';
+    const hostHeader = params.get('host') || sni;
     const grpcServiceName = params.get('serviceName') || params.get('mode') || '';
+    const mode = params.get('mode') || undefined;
+    const extraRaw = params.get('extra');
+    const alpn = params.get('alpn')
+      ?.split(',')
+      .map((item) => item.trim())
+      .filter(Boolean);
 
-    return { uuid, host, port, security, network, sni, fingerprint, publicKey, shortId, flow, wsPath, wsHost, grpcServiceName };
+    let extra: Record<string, any> | undefined;
+    if (extraRaw) {
+      try {
+        extra = JSON.parse(extraRaw);
+      } catch {
+        extra = undefined;
+      }
+    }
+
+    return {
+      uuid,
+      host,
+      port,
+      security,
+      network,
+      sni,
+      fingerprint,
+      publicKey,
+      shortId,
+      flow,
+      path,
+      hostHeader,
+      grpcServiceName,
+      mode,
+      extra,
+      alpn,
+    };
   } catch {
     return null;
   }
 }
 
 function generateXrayConfig(vless: VlessConfig): string {
-  const net = vless.network === 'ws' ? 'ws' : vless.network === 'grpc' ? 'grpc' : 'tcp';
+  const net =
+    vless.network === 'ws'
+      ? 'ws'
+      : vless.network === 'grpc'
+        ? 'grpc'
+        : vless.network === 'xhttp'
+          ? 'xhttp'
+          : 'tcp';
   const streamSettings: Record<string, any> = { network: net };
 
   if (net === 'ws') {
     streamSettings.wsSettings = {
-      path: vless.wsPath || '/',
-      headers: { Host: vless.wsHost || vless.sni },
+      path: vless.path || '/',
+      headers: { Host: vless.hostHeader || vless.sni },
     };
   } else if (net === 'grpc') {
     streamSettings.grpcSettings = { serviceName: vless.grpcServiceName || '' };
+  } else if (net === 'xhttp') {
+    const xhttpSettings: Record<string, any> = {
+      path: vless.path || '/',
+    };
+
+    if (vless.hostHeader) xhttpSettings.host = vless.hostHeader;
+    if (vless.mode) xhttpSettings.mode = vless.mode;
+    if (vless.extra) xhttpSettings.extra = vless.extra;
+
+    streamSettings.xhttpSettings = xhttpSettings;
   }
 
   if (vless.security === 'reality') {
@@ -140,6 +193,9 @@ function generateXrayConfig(vless: VlessConfig): string {
       fingerprint: vless.fingerprint || 'chrome',
       allowInsecure: false,
     };
+    if (vless.alpn?.length) {
+      streamSettings.tlsSettings.alpn = vless.alpn;
+    }
   }
 
   const outboundUser: Record<string, any> = {
