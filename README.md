@@ -123,7 +123,7 @@ curl -X POST http://NODE_IP:8443/api/proxies \
 Одна команда для загрузки и запуска:
 
 ```bash
-wget -qO /tmp/node-install.sh https://raw.githubusercontent.com/danielVNru/mtproto-node/master/install.sh && sudo bash /tmp/node-install.sh
+wget -qO /tmp/node-install.sh https://raw.githubusercontent.com/gospodenkods/mtproto-node/master/install.sh && sudo bash /tmp/node-install.sh
 ```
 
 Скрипт автоматически:
